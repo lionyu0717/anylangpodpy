@@ -1,0 +1,27 @@
+# Scraper
+aiohttp>=3.8.5
+
+# Logger
+logger>=0.1.0
+
+# Jina for document processing
+jina>=3.15.0
+docarray>=0.21.0
+
+# RSS feed parser
+feedparser>=6.0.8
+
+# Selenium for web scraping
+selenium>=4.11.0
+
+# GDELT API
+gdelt>=0.1.14
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Proxy manager
+requests>=2.31.0
+
+# Google News
+feedparser>=6.0.8
