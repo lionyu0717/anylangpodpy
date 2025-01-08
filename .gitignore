@@ -28,6 +28,7 @@ ENV/
 .venv
 env.bak/
 venv.bak/
+jupyter_env/
 
 # IDE specific files
 .idea/
