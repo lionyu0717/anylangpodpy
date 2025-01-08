@@ -19,6 +19,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
+pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
 
 # Virtual Environment
 venv/
@@ -29,6 +37,7 @@ ENV/
 env.bak/
 venv.bak/
 jupyter_env/
+*venv/
 
 # IDE specific files
 .idea/
@@ -40,6 +49,8 @@ jupyter_env/
 .env.development.local
 .env.test.local
 .env.production.local
+*.sublime-project
+*.sublime-workspace
 
 # Project specific
 output/
@@ -49,6 +60,8 @@ logs/
 coverage.xml
 .pytest_cache/
 htmlcov/
+tmp/
+temp/
 
 # API Keys and Secrets
 .env
@@ -56,14 +69,35 @@ credentials.json
 token.json
 *.pem
 *.key
+secrets/
+config.local.py
 
 # Audio files
 *.mp3
 *.wav
 *.aac
 *.m4a
+*.ogg
+*.flac
 
 # Generated content
 generated_scripts/
 podcast_output/
-temp/ 
+temp/
+*.generated.*
+generated/
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+*.db
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db 
