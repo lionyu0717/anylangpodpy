@@ -118,6 +118,46 @@ class GoogleTTS:
         lang_prefix = language_code.split('-')[0]
         return self.DEFAULT_VOICES.get(lang_prefix, self.DEFAULT_VOICES["en"])
     
+    async def text_to_speech(
+        self,
+        text: str,
+        output_path: str,
+        language_code: str = "en-GB",
+        voice_name: Optional[str] = None
+    ) -> float:
+        """
+        Convert text to speech (alias for synthesize_speech)
+        
+        Args:
+            text: The text to convert
+            output_path: Full path to save the audio file
+            language_code: The language code
+            voice_name: Optional specific voice name
+            
+        Returns:
+            float: Duration of the audio in seconds (estimated)
+        """
+        try:
+            # Get output directory from output_path
+            output_dir = str(Path(output_path).parent)
+            
+            # Generate audio file
+            await self.synthesize_speech(
+                text=text,
+                language_code=language_code,
+                voice_name=voice_name,
+                output_dir=output_dir
+            )
+            
+            # Estimate duration (rough estimate based on words and speaking rate)
+            words = len(text.split())
+            duration = (words * 0.4) * 0.25  # 0.4s per word * speaking rate
+            
+            return duration
+            
+        except Exception as e:
+            raise GoogleTTSError(f"Failed to convert text to speech: {str(e)}")
+    
     async def synthesize_podcast(
         self,
         script_file: str,

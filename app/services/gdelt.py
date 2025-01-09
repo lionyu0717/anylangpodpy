@@ -15,13 +15,36 @@ class GDELTService:
         """Initialize GDELT DOC 2.0 API service."""
         self.base_url = "https://api.gdeltproject.org/api/v2/doc/doc"
         self.proxy_enabled = proxy_enabled
+        logger.info(f"Initializing GDELTService with proxy_enabled={proxy_enabled}")
+        
         if proxy_enabled:
-            self.proxy_manager = ProxyManager("http://localhost:5010")
-        self.session = None  # Initialize session in async context
+            try:
+                self.proxy_manager = ProxyManager("http://localhost:5010")
+                # Test proxy connection
+                asyncio.create_task(self._test_proxy_connection())
+            except Exception as e:
+                logger.error(f"Failed to initialize proxy manager: {str(e)}")
+                self.proxy_enabled = False
+        self.session = None
+
+    async def _test_proxy_connection(self):
+        """Test if proxy service is available"""
+        try:
+            proxy = await self.proxy_manager.get_proxy()
+            if proxy:
+                logger.info("Successfully connected to proxy service")
+                await self.proxy_manager.delete_proxy(proxy)
+            else:
+                logger.error("Proxy service returned no proxies")
+                self.proxy_enabled = False
+        except Exception as e:
+            logger.error(f"Proxy service test failed: {str(e)}")
+            self.proxy_enabled = False
 
     async def _ensure_session(self):
         """Ensure aiohttp session exists"""
         if self.session is None or self.session.closed:
+            logger.info("Creating new aiohttp session")
             self.session = aiohttp.ClientSession(headers={
                 'User-Agent': 'Mozilla/5.0 (compatible; GDELTBot/1.0; +https://www.gdeltproject.org/)',
                 'Accept': 'application/json, text/plain, */*',
@@ -39,14 +62,15 @@ class GDELTService:
         for attempt in range(max_retries):
             proxy_dict = None
             try:
-                if self.proxy_enabled and attempt < 2:  # Try first two attempts with proxy
+                if self.proxy_enabled and attempt < 2:
+                    logger.info(f"Attempt {attempt + 1}: Getting proxy from service")
                     proxy_dict = await self.proxy_manager.get_proxy()
                     if proxy_dict:
-                        logger.info(f"Attempt {attempt + 1} with proxy: {proxy_dict}")
+                        logger.info(f"Using proxy: {proxy_dict['http']}")
                     else:
-                        logger.warning("Failed to get proxy, trying without proxy...")
+                        logger.warning("No proxy available, falling back to direct connection")
                 else:
-                    logger.info("Attempting without proxy...")
+                    logger.info(f"Attempt {attempt + 1}: Using direct connection")
                 
                 timeout = aiohttp.ClientTimeout(
                     total=60,
@@ -54,7 +78,8 @@ class GDELTService:
                     sock_read=30
                 )
                 
-                logger.info(f"Making request to {url}")
+                logger.info(f"Making request to: {url}")
+                request_start = time.time()
                 async with self.session.get(
                     url, 
                     proxy=proxy_dict["http"] if proxy_dict else None,
@@ -62,35 +87,35 @@ class GDELTService:
                     timeout=timeout,
                     allow_redirects=True
                 ) as response:
-                    logger.info(f"Got response with status: {response.status}")
+                    request_time = time.time() - request_start
+                    logger.info(f"Request completed in {request_time:.2f}s with status: {response.status}")
                     
-                    # Read the raw content first
                     content = await response.text()
-                    logger.info(f"Response content (first 200 chars): {content[:200]}")
+                    logger.debug(f"Response content preview: {content[:200]}")
                     
                     if response.status == 200 and content:
                         try:
                             data = json.loads(content)
                             if data:
-                                logger.info(f"Successfully retrieved data (attempt {attempt + 1})")
+                                logger.info(f"Successfully parsed JSON response on attempt {attempt + 1}")
                                 return data
                             else:
-                                logger.warning("Parsed JSON is empty")
+                                logger.warning("Received empty JSON response")
                         except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse JSON response: {str(e)}")
-                            logger.error(f"Raw content: {content[:500]}")
+                            logger.error(f"JSON parse error: {str(e)}")
+                            logger.debug(f"Failed content: {content[:500]}")
                     else:
-                        logger.error(f"GDELT API error {response.status}: {content[:200]}")
+                        logger.error(f"HTTP {response.status}: {content[:200]}")
                         if proxy_dict:
+                            logger.info(f"Removing failed proxy: {proxy_dict['http']}")
                             await self.proxy_manager.delete_proxy(proxy_dict)
-                            logger.info("Deleted failed proxy")
                             
             except asyncio.TimeoutError as e:
-                logger.error(f"Timeout error on attempt {attempt + 1}: {str(e)}")
+                logger.error(f"Timeout after {timeout.total}s on attempt {attempt + 1}")
                 if proxy_dict:
                     await self.proxy_manager.delete_proxy(proxy_dict)
             except aiohttp.ClientError as e:
-                logger.error(f"Client error on attempt {attempt + 1}: {str(e)}")
+                logger.error(f"HTTP client error on attempt {attempt + 1}: {str(e)}")
                 if proxy_dict:
                     await self.proxy_manager.delete_proxy(proxy_dict)
             except Exception as e:
@@ -98,9 +123,10 @@ class GDELTService:
                 if proxy_dict:
                     await self.proxy_manager.delete_proxy(proxy_dict)
             
+            logger.info(f"Waiting 2s before retry {attempt + 2}/{max_retries}")
             await asyncio.sleep(2)
         
-        logger.error("All retry attempts failed")
+        logger.error(f"All {max_retries} retry attempts failed")
         return None
 
     async def search(self, query: str, **params) -> Optional[Dict[str, Any]]:
@@ -119,7 +145,8 @@ class GDELTService:
                 
             # For multiple terms, wrap each in quotes and join with OR
             if len(terms) > 1:
-                query = f'({" OR ".join(f'"{term}"' for term in terms)})'
+                quoted_terms = [f'"{term}"' for term in terms]
+                query = f"({' OR '.join(quoted_terms)})"
             else:
                 query = f'"{terms[0]}"'
             
@@ -153,7 +180,8 @@ class GDELTService:
         """Get timeline visualization data."""
         try:
             # Format query string with proper OR syntax in parentheses
-            query = f'({" OR ".join(f'"{k}"' for k in keywords)})'
+            quoted_keywords = [f'"{k}"' for k in keywords]
+            query = f"({' OR '.join(quoted_keywords)})"
             
             params = {
                 "query": query,
@@ -180,27 +208,71 @@ class GDELTService:
     async def search_news(self, topic: str, max_results: int = 5) -> List[Dict[str, str]]:
         """Search for news articles about a topic and return in a standardized format"""
         try:
-            # Search GDELT with our parameters
-            results = await self.search(
-                query=topic,
-                timespan="7d",  # Last 7 days
-                maxrecords=max_results * 2  # Get more results than needed in case some fail
-            )
+            # Clean and validate the topic
+            topic = topic.strip()
+            if len(topic) < 4:  # GDELT requires longer phrases
+                topic = f"{topic} news"  # Append 'news' to make it longer
+                logger.info(f"Topic too short, modified to: {topic}")
             
-            if not results or 'articles' not in results:
+            # Format query for GDELT with proper escaping
+            query = f'"{topic}"'
+            if ' ' in topic:  # If topic has spaces, add an OR condition with hyphenated version
+                hyphenated = topic.replace(' ', '-')
+                query = f'("{topic}" OR "{hyphenated}")'
+            
+            search_params = {
+                'query': query,
+                'mode': 'artlist',
+                'format': 'json',
+                'timespan': '7d',
+                'maxrecords': max_results * 2,  # Get more results than needed in case some fail
+                'sort': 'DateDesc',
+                'trans': 'googtrans',
+                'SHOWSOURCES': 'yes'
+            }
+            
+            url = f"{self.base_url}?{urlencode(search_params)}"
+            logger.info(f"Using query: {query}")
+            logger.info(f"Full URL: {url}")
+            
+            results = await self._make_request(url)
+            
+            if isinstance(results, str) and "too short" in results.lower():
+                logger.error("GDELT rejected query as too short")
+                return []
+                
+            if not results:
+                logger.error("No results returned from GDELT")
+                return []
+                
+            if isinstance(results, str):
+                logger.error(f"Unexpected string response from GDELT: {results}")
+                return []
+                
+            if 'articles' not in results:
                 logger.error("No articles found in GDELT response")
                 return []
                 
             # Process and format the articles
             formatted_articles = []
             for article in results['articles'][:max_results]:
-                formatted_articles.append({
-                    "title": article.get('title', ''),
-                    "url": article.get('url', ''),
-                    "source": article.get('sourcecountry', 'Unknown'),
-                    "published": article.get('seendate', '')
-                })
+                try:
+                    formatted_article = {
+                        "title": article.get('title', '').strip(),
+                        "url": article.get('url', ''),
+                        "source": article.get('sourcecountry', 'Unknown'),
+                        "date": article.get('seendate', '')
+                    }
+                    # Only add articles with non-empty titles and URLs
+                    if formatted_article["title"] and formatted_article["url"]:
+                        formatted_articles.append(formatted_article)
+                    else:
+                        logger.warning(f"Skipping article with missing title or URL: {article}")
+                except Exception as e:
+                    logger.error(f"Error formatting article: {str(e)}")
+                    continue
                 
+            logger.info(f"Found {len(formatted_articles)} valid articles")
             return formatted_articles
             
         except Exception as e:

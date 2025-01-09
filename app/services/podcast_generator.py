@@ -29,7 +29,7 @@ class PodcastGenerator:
         self.text_generator = TextGenerator()
         
     async def _load_prompt_template(self) -> str:
-        prompt_path = Path("services/prompts/podcast.txt")
+        prompt_path = Path("app/services/prompts/podcast.txt")
         with open(prompt_path, "r") as f:
             return f.read()
             
@@ -39,19 +39,15 @@ class PodcastGenerator:
             # Get news articles from GDELT
             news_articles = await self.gdelt_service.search_news(topic, max_results=max_articles)
             
-            # Scrape full content for each article
+            # Scrape full content for each article using Jina
             articles_with_content = []
             for article in news_articles:
                 try:
-                    result = await self.content_scraper.fetch_content(
-                        url=article["url"],
-                        keyword=topic,
-                        title=article["title"]
-                    )
-                    if result["content"]:
+                    content = await self.content_scraper.scrape_url(article["url"])
+                    if content:
                         articles_with_content.append({
                             "title": article["title"],
-                            "content": clean_text(result["content"]),
+                            "content": clean_text(content),
                             "link": article["url"],
                             "source": article.get("source", "Unknown Source")
                         })

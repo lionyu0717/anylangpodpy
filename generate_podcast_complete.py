@@ -4,8 +4,80 @@ import asyncio
 import argparse
 from datetime import datetime
 from pathlib import Path
-from services.podcast_generator import PodcastGenerator
+from services.gdelt import GDELTService
+from services.text.text_generator import TextGenerator
 from services.tts.google_tts import GoogleTTS
+from services.scraper import Scraper
+from config import get_config
+
+class PodcastGenerator:
+    def __init__(self):
+        self.config = get_config()
+        self.gdelt_service = GDELTService()
+        self.text_generator = TextGenerator()
+        self.tts_service = GoogleTTS()
+        self.content_scraper = Scraper(self.config.JINA_CRAWLER_BASE_URL)
+
+    async def generate_podcast_script(
+        self,
+        keyword: str,
+        language_code: str = "en-GB",
+        max_length: int = None
+    ) -> str:
+        try:
+            # Get news articles from GDELT
+            news_data = await self.gdelt_service.search_news(keyword)
+            
+            # Scrape content from URLs
+            articles = []
+            for article in news_data[:3]:  # Process top 3 articles
+                content = await self.content_scraper.scrape_url(article.get("url", ""))
+                if content:
+                    articles.append({
+                        "title": article.get("title", ""),
+                        "content": content,
+                        "source": article.get("source", "")
+                    })
+            
+            if not articles:
+                return f"No news found for the topic: {keyword}"
+            
+            # Create a summary prompt
+            articles_text = "\n\n".join([
+                f"Article from {article['source']}:\nTitle: {article['title']}\nContent: {article['content'][:500]}..."
+                for article in articles
+            ])
+            
+            prompt = f"""Create a podcast script about {keyword} based on these news articles:
+            {articles_text}
+            
+            The script should be in a conversational tone and include:
+            1. An engaging introduction
+            2. Discussion of each news item, highlighting key points
+            3. A thoughtful conclusion that ties everything together
+            
+            Make it engaging and informative, suitable for a podcast format."""
+            
+            # Generate the script
+            script = await self.text_generator.generate(prompt)
+            return script
+            
+        except Exception as e:
+            print(f"Error generating podcast: {str(e)}")
+            return f"Error generating podcast content: {str(e)}"
+
+    async def generate_podcast_audio(
+        self,
+        text: str,
+        output_path: str,
+        language_code: str = "en-GB"
+    ) -> None:
+        """Generate audio from text using TTS."""
+        await self.tts_service.text_to_speech(
+            text=text,
+            output_path=output_path,
+            language_code=language_code
+        )
 
 async def generate_complete_podcast(
     topic: str,
@@ -15,72 +87,62 @@ async def generate_complete_podcast(
 ):
     """
     Generate a complete podcast from topic to audio
-    
-    Steps:
-    1. Search for news articles about the topic
-    2. Generate podcast script in target language using LLM
-    3. Convert script to audio using TTS
     """
     try:
-        print(f"\n=== Starting podcast generation for topic: {topic} ===\n")
+        # Initialize generator
+        generator = PodcastGenerator()
         
-        # Create output directory if it doesn't exist
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        # Generate script
+        script = await generator.generate_podcast_script(topic, language_code)
         
-        # Step 1 & 2: Generate podcast script in target language
-        print(f"Generating podcast script in {language_code}...")
-        podcast_gen = PodcastGenerator()
-        script = await podcast_gen.generate_podcast_script(topic, language_code)
-        
-        # Save the script
+        # Save script to file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_file = f"{output_dir}/podcast_{topic.replace(' ', '_')}_{timestamp}.txt"
-        with open(script_file, "w") as f:
+        script_filename = f"podcast_{topic.lower().replace(' ', '_')}_{timestamp}.txt"
+        script_path = Path(output_dir) / script_filename
+        
+        with open(script_path, "w") as f:
             f.write(script)
-        print(f"Script saved to: {script_file}")
+            
+        # Generate audio
+        audio_filename = f"tts_{language_code}_{timestamp}.mp3"
+        audio_path = Path(output_dir) / audio_filename
         
-        # Step 3: Convert to audio
-        print("\nConverting script to audio...")
-        tts = GoogleTTS()
-        audio_file = await tts.synthesize_speech(
+        await generator.generate_podcast_audio(
             text=script,
-            language_code=language_code,
-            voice_name=voice_name,
-            output_dir=output_dir
+            output_path=str(audio_path),
+            language_code=language_code
         )
-        print(f"Audio saved to: {audio_file}")
-        
-        print(f"\n=== Podcast generation complete! ===")
-        print(f"Script: {script_file}")
-        print(f"Audio: {audio_file}")
         
         return {
-            "script_file": script_file,
-            "audio_file": audio_file
+            "script_path": str(script_path),
+            "audio_path": str(audio_path),
+            "script": script
         }
         
     except Exception as e:
-        print(f"Error generating podcast: {str(e)}")
-        raise
+        print(f"Error in complete podcast generation: {str(e)}")
+        return None
 
 async def main():
-    parser = argparse.ArgumentParser(description="Generate a complete podcast from topic to audio")
-    parser.add_argument("topic", help="The topic to generate a podcast about")
-    parser.add_argument("--language", default="en-GB", help="Language code (e.g., en-GB, fr-FR)")
-    parser.add_argument("--voice", help="Specific voice name (optional)")
-    parser.add_argument("--output-dir", default="output", help="Output directory for files")
+    parser = argparse.ArgumentParser(description="Generate a podcast from a topic")
+    parser.add_argument("topic", help="Topic to generate podcast about")
+    parser.add_argument("--language", default="en-GB", help="Language code (default: en-GB)")
+    parser.add_argument("--output-dir", default="output", help="Output directory (default: output)")
+    
     args = parser.parse_args()
     
-    try:
-        await generate_complete_podcast(
-            topic=args.topic,
-            language_code=args.language,
-            voice_name=args.voice,
-            output_dir=args.output_dir
-        )
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        exit(1)
+    result = await generate_complete_podcast(
+        args.topic,
+        language_code=args.language,
+        output_dir=args.output_dir
+    )
+    
+    if result:
+        print(f"Generated podcast:")
+        print(f"Script saved to: {result['script_path']}")
+        print(f"Audio saved to: {result['audio_path']}")
+    else:
+        print("Failed to generate podcast")
 
 if __name__ == "__main__":
     asyncio.run(main()) 
